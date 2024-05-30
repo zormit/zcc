@@ -1,7 +1,7 @@
-use clap::Parser;
+use clap::{Args, Parser};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{self, Command};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -9,6 +9,22 @@ use std::process::Command;
 struct Driver {
     /// Path to the file to compile
     path: PathBuf,
+    #[command(flatten)]
+    step: Step,
+}
+
+#[derive(Args)]
+#[group(multiple = false)]
+struct Step {
+    /// Run the lexer, but stop before parsing
+    #[arg(long, action)]
+    lex: bool,
+    /// Run the lexer and parser, but stop before assembly generation
+    #[arg(long, action)]
+    parse: bool,
+    /// Perform lexing, parsing, and assembly generation, but stop before code emission
+    #[arg(long, action)]
+    codegen: bool,
 }
 
 fn main() {
@@ -34,6 +50,21 @@ fn main() {
     println!("Preprocess finished with: {prep}");
 
     println!("Compiling! (..not...)");
+    if cli.step.lex {
+        println!("Wrapping it up after Lexing.");
+        fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
+        process::exit(0);
+    }
+    if cli.step.parse {
+        println!("Wrapping it up after Parsing.");
+        fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
+        process::exit(0);
+    }
+    if cli.step.codegen {
+        println!("Wrapping it up after Code generation.");
+        fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
+        process::exit(0);
+    }
 
     fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
 
