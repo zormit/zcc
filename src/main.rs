@@ -1,10 +1,11 @@
-use clap::{Args, Parser};
+use clap::{Args, Parser as ClapParser};
 use regex::Regex;
+use std::cell::Cell;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
 
-#[derive(Parser)]
+#[derive(ClapParser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
 struct Driver {
@@ -28,7 +29,7 @@ struct Step {
     codegen: bool,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum TokenKind {
     Identifier,
     Constant,
@@ -43,7 +44,6 @@ enum TokenKind {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-#[allow(dead_code)]
 struct Token {
     kind: TokenKind,
     text: String,
@@ -83,9 +83,9 @@ impl Token {
     fn error() -> Self {
         Self::new(TokenKind::ErrorToken, "")
     }
-    fn eof() -> Self {
-        Self::new(TokenKind::Eof, "")
-    }
+    // fn eof() -> Self {
+    //     Self::new(TokenKind::Eof, "")
+    // }
 }
 
 fn lexer(text: String) -> Vec<Token> {
@@ -143,8 +143,192 @@ fn lexer(text: String) -> Vec<Token> {
 
         input = &input[1..];
     }
-    token.push(Token::eof());
+    // token.push(Token::eof());
     token
+}
+
+#[derive(Debug)]
+enum TreeKind {
+    Program,
+    Function,
+    Return,
+    ErrorTree,
+}
+#[derive(Debug)]
+struct Tree {
+    kind: TreeKind,
+    children: Vec<Child>,
+}
+#[derive(Debug)]
+enum Child {
+    Token(Token),
+    Tree(Tree),
+}
+
+#[derive(Debug)]
+enum Event {
+    Open { kind: TreeKind },
+    Close,
+    Advance,
+}
+struct MarkOpened {
+    index: usize,
+}
+struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+    fuel: Cell<u32>,
+    events: Vec<Event>,
+}
+
+impl Parser {
+    fn new(tokens: Vec<Token>) -> Self {
+        Parser {
+            tokens,
+            pos: 0,
+            fuel: Cell::new(256),
+            events: Vec::default(),
+        }
+    }
+
+    fn open(&mut self) -> MarkOpened {
+        let mark = MarkOpened {
+            index: self.events.len(),
+        };
+        self.events.push(Event::Open {
+            kind: TreeKind::ErrorTree,
+        });
+        mark
+    }
+    fn advance(&mut self) {
+        assert!(!self.eof());
+        self.fuel.set(256);
+        self.events.push(Event::Advance);
+        self.pos += 1;
+    }
+
+    fn eof(&self) -> bool {
+        self.pos == self.tokens.len()
+    }
+    fn close(&mut self, m: MarkOpened, kind: TreeKind) {
+        self.events[m.index] = Event::Open { kind };
+        self.events.push(Event::Close);
+    }
+
+    fn nth(&self, lookahead: usize) -> TokenKind {
+        if self.fuel.get() == 0 {
+            panic!("parser is stuck")
+        }
+        self.fuel.set(self.fuel.get() - 1);
+        self.tokens
+            .get(self.pos + lookahead)
+            .map_or(TokenKind::Eof, |t| t.kind)
+    }
+
+    fn at(&self, kind: TokenKind) -> bool {
+        self.nth(0) == kind
+    }
+
+    fn eat(&mut self, kind: TokenKind) -> bool {
+        if self.at(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, kind: TokenKind) {
+        if self.eat(kind) {
+            return;
+        }
+        eprintln!("expected {kind:?}");
+    }
+
+    fn build_tree(self) -> Tree {
+        let mut tokens = self.tokens.into_iter();
+        let mut events = self.events;
+        let mut stack = Vec::new();
+
+        assert!(matches!(events.pop(), Some(Event::Close)));
+
+        for event in events {
+            match event {
+                Event::Open { kind } => stack.push(Tree {
+                    kind,
+                    children: Vec::new(),
+                }),
+                Event::Close => {
+                    let tree = stack.pop().unwrap();
+                    stack.last_mut().unwrap().children.push(Child::Tree(tree));
+                }
+                Event::Advance => {
+                    let token = tokens.next().unwrap();
+                    stack.last_mut().unwrap().children.push(Child::Token(token))
+                }
+            }
+        }
+
+        assert!(stack.len() == 1);
+        assert!(tokens.next().is_none());
+
+        stack.pop().unwrap()
+    }
+}
+
+fn parse_program(p: &mut Parser) {
+    let m = p.open();
+
+    dbg!(p.tokens.len());
+
+    while !p.eof() {
+        dbg!(p.nth(0));
+        dbg!(p.pos);
+        if p.at(TokenKind::Keyword) {
+            parse_function(p)
+        } else {
+            panic!("expected a keyword");
+        }
+    }
+    p.close(m, TreeKind::Program);
+    //    Tree {
+    //        kind: TreeKind::Program,
+    //        children: vec![Child::Tree(Tree {
+    //            kind: TreeKind::Function,
+    //            children: vec![Child::Tree(Tree {
+    //                kind: TreeKind::Return,
+    //                children: vec![Child::Token(Token::Constant(2))],
+    //            })],
+    //        })],
+    //    }
+}
+
+// function = "int" <identifier> "(" "void" ")" "{" <statement> "}"
+fn parse_function(p: &mut Parser) {
+    // TODO: is this enough as a guard? or do we need lookahead later?
+    assert!(p.at(TokenKind::Keyword));
+    let m = p.open();
+
+    p.expect(TokenKind::Keyword);
+    p.expect(TokenKind::Identifier);
+    p.expect(TokenKind::OpenParen);
+    p.expect(TokenKind::Keyword);
+    p.expect(TokenKind::CloseParen);
+    p.expect(TokenKind::OpenBrace);
+    parse_statement(p);
+    p.expect(TokenKind::CloseBrace);
+
+    p.close(m, TreeKind::Function);
+}
+
+// "return" <exp> ";"
+fn parse_statement(p: &mut Parser) {
+    let m = p.open();
+    p.expect(TokenKind::Keyword);
+    p.expect(TokenKind::Constant);
+    p.expect(TokenKind::Semicolon);
+
+    p.close(m, TreeKind::Return);
 }
 
 fn main() {
@@ -173,8 +357,8 @@ fn main() {
     let text = fs::read_to_string(prep_file).expect("Failed to read input file.");
     let tokens = lexer(text);
 
+    dbg!(&tokens);
     if cli.step.lex {
-        dbg!(&tokens);
         println!("Wrapping it up after Lexing.");
         fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
         if tokens.iter().any(|t| t.kind == TokenKind::ErrorToken) {
@@ -182,6 +366,12 @@ fn main() {
         }
         process::exit(0);
     }
+
+    let mut parser = Parser::new(tokens);
+    parse_program(&mut parser);
+    dbg!(&parser.events);
+    dbg!(parser.build_tree());
+
     if cli.step.parse {
         println!("Wrapping it up after Parsing.");
         fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
