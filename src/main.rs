@@ -243,6 +243,7 @@ impl Parser {
             return;
         }
         eprintln!("expected {kind:?}");
+        process::exit(1);
     }
 
     fn build_tree(self) -> Tree {
