@@ -29,6 +29,7 @@ struct Step {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum Token {
     Identifier(String),
     Constant(u64),
