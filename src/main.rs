@@ -28,18 +28,66 @@ struct Step {
     codegen: bool,
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-enum Token {
-    Identifier(String),
-    Constant(u64),
-    Keyword(String),
+#[derive(Debug, PartialEq, Clone)]
+enum TokenKind {
+    Identifier,
+    Constant,
+    Keyword,
     OpenParen,
     CloseParen,
     OpenBrace,
     CloseBrace,
     Semicolon,
+    Eof,
+    ErrorToken,
 }
+
+#[derive(Debug, PartialEq, Clone)]
+#[allow(dead_code)]
+struct Token {
+    kind: TokenKind,
+    text: String,
+}
+
+impl Token {
+    fn new(kind: TokenKind, text: &str) -> Self {
+        Token {
+            kind,
+            text: text.into(),
+        }
+    }
+    fn open_paren() -> Self {
+        Self::new(TokenKind::OpenParen, "(")
+    }
+    fn close_paren() -> Self {
+        Self::new(TokenKind::CloseParen, ")")
+    }
+    fn open_brace() -> Self {
+        Self::new(TokenKind::OpenBrace, "{")
+    }
+    fn close_brace() -> Self {
+        Self::new(TokenKind::CloseBrace, "}")
+    }
+    fn semicolon() -> Self {
+        Self::new(TokenKind::Semicolon, ";")
+    }
+    fn constant(text: &str) -> Self {
+        Self::new(TokenKind::Constant, text)
+    }
+    fn keyword(text: &str) -> Self {
+        Self::new(TokenKind::Keyword, text)
+    }
+    fn identifier(text: &str) -> Self {
+        Self::new(TokenKind::Identifier, text)
+    }
+    fn error() -> Self {
+        Self::new(TokenKind::ErrorToken, "")
+    }
+    fn eof() -> Self {
+        Self::new(TokenKind::Eof, "")
+    }
+}
+
 fn lexer(text: String) -> Vec<Token> {
     // while input isn't empty:
     //   if input starts with whitespace:
@@ -56,15 +104,15 @@ fn lexer(text: String) -> Vec<Token> {
 
         if char.is_whitespace() {
         } else if char == '(' {
-            token.push(Token::OpenParen);
+            token.push(Token::open_paren());
         } else if char == ')' {
-            token.push(Token::CloseParen);
+            token.push(Token::close_paren());
         } else if char == '{' {
-            token.push(Token::OpenBrace);
+            token.push(Token::open_brace());
         } else if char == '}' {
-            token.push(Token::CloseBrace);
+            token.push(Token::close_brace());
         } else if char == ';' {
-            token.push(Token::Semicolon);
+            token.push(Token::semicolon());
         } else {
             let keyword = Regex::new(r"^(void|int|return)\b").unwrap();
             let constant = Regex::new(r"^([0-9]+)\b").unwrap();
@@ -73,29 +121,29 @@ fn lexer(text: String) -> Vec<Token> {
                 let caps = constant.captures(input).unwrap();
                 let matched_const = caps.get(0).unwrap().as_str();
                 input = &input[matched_const.len()..];
-                token.push(Token::Constant(matched_const.parse().unwrap()));
+                token.push(Token::constant(matched_const));
                 continue;
             } else if identifier.is_match(input) {
                 if keyword.is_match(input) {
                     let caps = keyword.captures(input).unwrap();
                     let matched_keyword = caps.get(0).unwrap().as_str();
                     input = &input[matched_keyword.len()..];
-                    token.push(Token::Keyword(matched_keyword.into()));
+                    token.push(Token::keyword(matched_keyword));
                     continue;
                 }
                 let caps = identifier.captures(input).unwrap();
                 let matched_identifier = caps.get(0).unwrap().as_str();
                 input = &input[matched_identifier.len()..];
-                token.push(Token::Identifier(matched_identifier.into()));
+                token.push(Token::identifier(matched_identifier));
                 continue;
             } else {
-                println!("ERROR");
-                process::exit(1);
+                token.push(Token::error())
             }
         }
 
         input = &input[1..];
     }
+    token.push(Token::eof());
     token
 }
 
@@ -123,11 +171,15 @@ fn main() {
 
     println!("Lexing! (..not...)");
     let text = fs::read_to_string(prep_file).expect("Failed to read input file.");
-    dbg!(lexer(text));
+    let tokens = lexer(text);
 
     if cli.step.lex {
+        dbg!(&tokens);
         println!("Wrapping it up after Lexing.");
         fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
+        if tokens.iter().any(|t| t.kind == TokenKind::ErrorToken) {
+            process::exit(1);
+        }
         process::exit(0);
     }
     if cli.step.parse {
