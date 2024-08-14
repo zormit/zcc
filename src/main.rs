@@ -147,25 +147,25 @@ fn lexer(text: String) -> Vec<Token> {
     token
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 enum TreeKind {
     Program,
     Function,
     Return,
     ErrorTree,
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 struct Tree {
     kind: TreeKind,
     children: Vec<Child>,
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 enum Child {
     Token(Token),
     Tree(Tree),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Event {
     Open { kind: TreeKind },
     Close,
@@ -275,6 +275,59 @@ impl Parser {
 
         stack.pop().unwrap()
     }
+
+    fn pretty_print(tree: &Tree, depth: usize, show_kind: bool) {
+        //  Program(
+        //      Function(
+        //          name="main",
+        //          body=Return(
+        //              Constant(2)
+        //          )
+        //      )
+        //  )
+        if show_kind {
+            println!("{:depth$}{:?}(", "", tree.kind);
+        }
+        match tree.kind {
+            TreeKind::Program => {
+                for child in &tree.children {
+                    if let Child::Tree(t) = child {
+                        Parser::pretty_print(t, depth + 4, true);
+                    }
+                }
+            }
+            TreeKind::Function => {
+                if let Some(Child::Token(Token {
+                    text,
+                    kind: TokenKind::Identifier,
+                })) = tree.children.get(1)
+                {
+                    println!("{:depth$}name = \"{text}\"", "", depth = depth + 4);
+                }
+                if let Some(Child::Tree(Tree { kind, children })) = tree.children.get(6) {
+                    println!("{:depth$}body = {kind:?}(", "", depth = depth + 4);
+                    Parser::pretty_print(
+                        &Tree {
+                            kind: kind.clone(),
+                            children: children.clone(),
+                        },
+                        depth + 4,
+                        false,
+                    );
+                    println!("{:depth$})", "", depth = depth + 4);
+                }
+            }
+            TreeKind::Return => {
+                if let Some(Child::Token(Token { text, kind })) = tree.children.get(1) {
+                    println!("{:depth$}{kind:?}({text})", "", depth = depth + 4);
+                }
+            }
+            TreeKind::ErrorTree => {}
+        }
+        if show_kind {
+            println!("{:depth$})", "");
+        }
+    }
 }
 
 fn parse_program(p: &mut Parser) {
@@ -371,7 +424,9 @@ fn main() {
     let mut parser = Parser::new(tokens);
     parse_program(&mut parser);
     dbg!(&parser.events);
-    dbg!(parser.build_tree());
+    let tree = parser.build_tree();
+    //dbg!(&tree);
+    dbg!(Parser::pretty_print(&tree, 0, true));
 
     if cli.step.parse {
         println!("Wrapping it up after Parsing.");
