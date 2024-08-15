@@ -385,6 +385,89 @@ fn parse_statement(p: &mut Parser) {
     p.close(m, TreeKind::Return);
 }
 
+// program = Program(function_definition)
+// function_definition = Function(identifier name, instruction* instructions)
+// instruction = Mov(operand src, operand dst) | Ret
+// operand = Imm(int) | Register
+
+#[derive(Debug, PartialEq, Clone)]
+struct ASMProgram(ASMFunction);
+#[derive(Debug, PartialEq, Clone)]
+struct ASMFunction {
+    identifier: String,
+    instructions: Vec<ASMInstruction>,
+}
+#[derive(Debug, PartialEq, Clone)]
+enum ASMInstruction {
+    Mov { src: ASMOperand, dst: ASMOperand },
+    Ret,
+}
+#[derive(Debug, PartialEq, Clone)]
+enum ASMOperand {
+    Imm(u32),
+    Register,
+}
+
+fn generate_assembly(tree: &Tree) -> ASMProgram {
+    match tree.kind {
+        TreeKind::Program => {
+            if let Some(Child::Tree(tree)) = tree.children.first() {
+                ASMProgram(generate_function(tree))
+            } else {
+                panic!("Should have had a Tree Child");
+            }
+        }
+        _ => panic!("should have been a program here."),
+    }
+}
+
+fn generate_function(tree: &Tree) -> ASMFunction {
+    match tree.kind {
+        TreeKind::Function => {
+            if let Some(Child::Token(Token {
+                text,
+                kind: TokenKind::Identifier,
+            })) = tree.children.get(1)
+            {
+                if let Some(Child::Tree(tree)) = tree.children.get(6) {
+                    ASMFunction {
+                        identifier: text.to_owned(),
+                        instructions: generate_return(tree),
+                    }
+                } else {
+                    panic!("could not find body");
+                }
+            } else {
+                panic!("could not find identifier");
+            }
+        }
+        _ => panic!("should have been a function."),
+    }
+}
+
+fn generate_return(tree: &Tree) -> Vec<ASMInstruction> {
+    match tree.kind {
+        TreeKind::Return => {
+            if let Some(Child::Token(Token {
+                text,
+                kind: TokenKind::Constant,
+            })) = tree.children.get(1)
+            {
+                vec![
+                    ASMInstruction::Mov {
+                        src: ASMOperand::Imm(text.parse().unwrap()),
+                        dst: ASMOperand::Register,
+                    },
+                    ASMInstruction::Ret,
+                ]
+            } else {
+                panic!("No constant found where one was expected");
+            }
+        }
+        _ => panic!("should have been a function."),
+    }
+}
+
 fn main() {
     let cli = Driver::parse();
     println!("Starting to compile {}", cli.path.display());
@@ -407,7 +490,7 @@ fn main() {
         .unwrap();
     println!("Preprocess finished with: {prep}");
 
-    println!("Lexing! (..not...)");
+    println!("Lexing!");
     let text = fs::read_to_string(prep_file).expect("Failed to read input file.");
     let tokens = lexer(text);
 
@@ -433,6 +516,10 @@ fn main() {
         fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
         process::exit(0);
     }
+
+    let asm_tree = generate_assembly(&tree);
+    dbg!(asm_tree);
+
     if cli.step.codegen {
         println!("Wrapping it up after Code generation.");
         fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
