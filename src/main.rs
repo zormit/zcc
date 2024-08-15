@@ -468,6 +468,51 @@ fn generate_return(tree: &Tree) -> Vec<ASMInstruction> {
     }
 }
 
+fn emit_program(asm: &ASMProgram) -> Vec<u8> {
+    let mut output = vec![];
+
+    let ASMProgram(f) = asm;
+    let ASMFunction {
+        identifier,
+        instructions,
+    } = f;
+    output.extend_from_slice(b"\t.globl\t_");
+    output.extend_from_slice(identifier.as_bytes());
+    output.extend_from_slice(b"\n");
+    output.extend_from_slice(b"_");
+    output.extend_from_slice(identifier.as_bytes());
+    output.extend_from_slice(b":\n");
+    for instruction in instructions {
+        match instruction {
+            ASMInstruction::Mov { src, dst } => {
+                output.extend_from_slice(b"\tmovl\t");
+                output.extend(emit_op(src));
+                output.extend_from_slice(b", ");
+                output.extend(emit_op(dst));
+                output.extend_from_slice(b"\n");
+            }
+            ASMInstruction::Ret => {
+                output.extend_from_slice(b"\tret\n");
+            }
+        }
+    }
+    output
+}
+
+fn emit_op(op: &ASMOperand) -> Vec<u8> {
+    let mut output = vec![];
+    match op {
+        ASMOperand::Imm(i) => {
+            output.extend_from_slice(b"$");
+            output.extend_from_slice(i.to_string().as_bytes());
+        }
+        ASMOperand::Register => {
+            output.extend_from_slice(b"%eax");
+        }
+    }
+    output
+}
+
 fn main() {
     let cli = Driver::parse();
     println!("Starting to compile {}", cli.path.display());
@@ -518,7 +563,7 @@ fn main() {
     }
 
     let asm_tree = generate_assembly(&tree);
-    dbg!(asm_tree);
+    dbg!(&asm_tree);
 
     if cli.step.codegen {
         println!("Wrapping it up after Code generation.");
@@ -526,9 +571,11 @@ fn main() {
         process::exit(0);
     }
 
+    let ass_file = &cli.path.with_extension("s");
+    fs::write(ass_file, emit_program(&asm_tree)).unwrap();
+
     fs::remove_file(prep_file).expect("Could not remove preprocessed file.");
 
-    let ass_file = &cli.path.with_extension("s");
     let out_file = &cli.path.with_extension("");
     println!("gcc {} -o {}", ass_file.display(), out_file.display());
     let assemble = Command::new("gcc")
